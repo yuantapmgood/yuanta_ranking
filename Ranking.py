@@ -6,9 +6,7 @@ import os
 # --- 頁面與全域變數設定 ---
 st.set_page_config(page_title="投信公會券商排名分析系統", layout="wide")
 
-# 您可以在這裡修改預設顯示的報表區間
 REPORT_PERIOD = "2026/1月-7月" 
-# 設定管理員密碼
 ADMIN_PASSWORD = "yuanta_admin" 
 
 mapping_file = 'funds_mapping.csv'
@@ -60,25 +58,28 @@ def process_raw_data(uploaded_file):
         return None
 
 # --- UI 開始 ---
-# 新增：標題帶入資料區間
 st.title(f"📊 投信公會券商排名分析系統 ({REPORT_PERIOD})")
 
 # ==========================================
-# 側邊欄 (Sidebar) - 基金設定管理 (含密碼保護)
+# 側邊欄 (Sidebar) - 基金設定管理
 # ==========================================
 with st.sidebar:
-    st.header("⚙️ 基金複委託設定管理")
+    st.header("⚙️ 基金複委託設定檢視與管理")
     
-    # 加入密碼驗證框
-    pwd_input = st.text_input("請輸入管理員密碼解鎖設定：", type="password")
-    
-    if pwd_input == ADMIN_PASSWORD:
-        st.success("✅ 身分驗證成功，可進行設定修改。")
+    # 所有人都能看見當前的設定狀態
+    if os.path.exists(mapping_file):
+        existing_mapping = pd.read_csv(mapping_file)
+        st.write(f"目前資料庫已記錄 **{len(existing_mapping)}** 檔基金。")
         
-        if os.path.exists(mapping_file):
-            existing_mapping = pd.read_csv(mapping_file)
-            st.write(f"目前資料庫已記錄 **{len(existing_mapping)}** 檔基金。")
+        # 密碼輸入框
+        st.divider()
+        st.write("🔒 **管理員修改區**")
+        pwd_input = st.text_input("輸入密碼以解鎖編輯權限：", type="password")
+        
+        if pwd_input == ADMIN_PASSWORD:
+            st.success("✅ 已解鎖！您可以直接在下方表格修改設定。")
             
+            # 解鎖後：顯示可編輯的表格與儲存按鈕
             edited_mapping = st.data_editor(
                 existing_mapping, 
                 num_rows="dynamic", 
@@ -91,17 +92,21 @@ with st.sidebar:
                 st.success("設定已儲存！")
                 st.rerun()
                 
-            st.divider()
             if st.button("🗑️ 清除所有基金分類紀錄"):
                 os.remove(mapping_file)
                 st.success("紀錄已清除！")
                 st.rerun()
         else:
-            st.warning("目前尚無基金分類紀錄。上傳檔案後若有新基金，系統會請您設定。")
-    elif pwd_input != "":
-        st.error("密碼錯誤，拒絕存取。")
+            if pwd_input != "":
+                st.error("密碼錯誤。")
+            st.info("目前為唯讀模式。")
+            
+            # 未解鎖時：顯示純檢視的表格 (唯讀)
+            st.dataframe(existing_mapping, use_container_width=True, hide_index=True)
+            
     else:
-        st.info("僅限國金部負責人員修改設定。")
+        st.warning("目前尚無基金分類紀錄。")
+        pwd_input = st.text_input("輸入密碼以解鎖新基金設定：", type="password")
 
 # ==========================================
 # 主畫面邏輯 
@@ -117,7 +122,7 @@ if uploaded_file is not None:
                 st.session_state.last_uploaded = uploaded_file.name
                 
                 parsed_df.to_csv(latest_data_file, index=False)
-                st.success("✅ 報表已成功上傳並更新至伺服器，其他同事重新整理網頁即可看見最新數據！")
+                st.success("✅ 報表已成功上傳並更新至伺服器！")
 
 if st.session_state.raw_data is not None:
     df = st.session_state.raw_data.copy()
@@ -133,17 +138,18 @@ if st.session_state.raw_data is not None:
     if not new_funds.empty:
         st.warning(f"⚠️ 發現 {len(new_funds)} 檔系統未記錄的新基金！請在左側輸入密碼解鎖後，在下方勾選是否為複委託：")
         new_funds['是複委託'] = False
-        edited_new = st.data_editor(new_funds, key="edit_new", use_container_width=True)
         
-        # 新基金的儲存也加上簡單的密碼驗證防護（必須在左側解鎖）
+        # 如果有解鎖，顯示可編輯表格；否則顯示唯讀
         if pwd_input == ADMIN_PASSWORD:
-            if st.button("➕ 儲存新基金並繼續"):
+            edited_new = st.data_editor(new_funds, key="edit_new", use_container_width=True)
+            if st.button("➕ 儲存新基金並繼續", type="primary"):
                 mapping_df = pd.concat([mapping_df, edited_new], ignore_index=True)
                 mapping_df.to_csv(mapping_file, index=False)
                 st.success("新基金已儲存！請重新整理以檢視排名。")
                 st.rerun()
         else:
-            st.error("請先在左側輸入管理員密碼，才能儲存新基金設定。")
+            st.dataframe(new_funds, use_container_width=True, hide_index=True)
+            st.error("🔒 請先在左側輸入管理員密碼解鎖，才能勾選與儲存新基金設定。")
     else:
         st.divider()
         st.subheader("🏆 複委託業務券商排名")
@@ -155,7 +161,6 @@ if st.session_state.raw_data is not None:
             col1, col2 = st.columns([1, 2])
             
             with col1:
-                # 已修正：排除空值並轉為字串
                 available_brokers = sorted(sub_broker_df['券商'].dropna().astype(str).unique())
                 default_index = available_brokers.index('元大證券') if '元大證券' in available_brokers else 0
                 target_broker = st.selectbox("請選擇要觀察的券商：", available_brokers, index=default_index)
@@ -168,4 +173,4 @@ if st.session_state.raw_data is not None:
             st.write(f"**{target_broker}** 在各投信複委託交易量的排名整理：")
             st.dataframe(result, use_container_width=True, hide_index=True)
         else:
-            st.info("目前勾選的複委託基金中，沒有找到對應的交易紀錄。請確認左側設定。")
+            st.info("目前勾選的複委託基金中，沒有找到對應的交易紀錄。請確認設定。")
