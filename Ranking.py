@@ -3,25 +3,26 @@ import pandas as pd
 import re
 import os
 
-# --- 頁面設定 ---
+# --- 頁面與全域變數設定 ---
 st.set_page_config(page_title="投信公會券商排名分析系統", layout="wide")
 
-# --- 參數與實體檔案路徑 ---
-mapping_file = 'funds_mapping.csv'
-latest_data_file = 'latest_report.csv' # 新增：用來儲存最新上傳的報表資料
+# 您可以在這裡修改預設顯示的報表區間
+REPORT_PERIOD = "2026/1月-7月" 
+# 設定管理員密碼
+ADMIN_PASSWORD = "yuanta_admin" 
 
-# --- 初始化 Session State ---
+mapping_file = 'funds_mapping.csv'
+latest_data_file = 'latest_report.csv'
+
 if 'raw_data' not in st.session_state:
     st.session_state.raw_data = None
 
-# 如果伺服器上已經有人上傳過並存檔，就自動載入給所有連線進來的人看
 if st.session_state.raw_data is None and os.path.exists(latest_data_file):
     try:
         st.session_state.raw_data = pd.read_csv(latest_data_file)
     except Exception as e:
         st.error("讀取伺服器暫存報表失敗，請重新上傳。")
 
-# --- 資料清理與名稱整合函數 ---
 @st.cache_data
 def process_raw_data(uploaded_file):
     try:
@@ -59,42 +60,52 @@ def process_raw_data(uploaded_file):
         return None
 
 # --- UI 開始 ---
-st.title("📊 投信公會券商排名分析系統")
+# 新增：標題帶入資料區間
+st.title(f"📊 投信公會券商排名分析系統 ({REPORT_PERIOD})")
 
 # ==========================================
-# 側邊欄 (Sidebar) - 基金設定管理
+# 側邊欄 (Sidebar) - 基金設定管理 (含密碼保護)
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 基金複委託設定管理")
     
-    if os.path.exists(mapping_file):
-        existing_mapping = pd.read_csv(mapping_file)
-        st.write(f"目前資料庫已記錄 **{len(existing_mapping)}** 檔基金。")
+    # 加入密碼驗證框
+    pwd_input = st.text_input("請輸入管理員密碼解鎖設定：", type="password")
+    
+    if pwd_input == ADMIN_PASSWORD:
+        st.success("✅ 身分驗證成功，可進行設定修改。")
         
-        edited_mapping = st.data_editor(
-            existing_mapping, 
-            num_rows="dynamic", 
-            key="edit_existing",
-            use_container_width=True
-        )
-        
-        if st.button("💾 儲存修改至資料庫", type="primary"):
-            edited_mapping.to_csv(mapping_file, index=False)
-            st.success("設定已儲存！")
-            st.rerun()
+        if os.path.exists(mapping_file):
+            existing_mapping = pd.read_csv(mapping_file)
+            st.write(f"目前資料庫已記錄 **{len(existing_mapping)}** 檔基金。")
             
-        st.divider()
-        if st.button("🗑️ 清除所有基金分類紀錄"):
-            os.remove(mapping_file)
-            st.success("紀錄已清除！")
-            st.rerun()
+            edited_mapping = st.data_editor(
+                existing_mapping, 
+                num_rows="dynamic", 
+                key="edit_existing",
+                use_container_width=True
+            )
+            
+            if st.button("💾 儲存修改至資料庫", type="primary"):
+                edited_mapping.to_csv(mapping_file, index=False)
+                st.success("設定已儲存！")
+                st.rerun()
+                
+            st.divider()
+            if st.button("🗑️ 清除所有基金分類紀錄"):
+                os.remove(mapping_file)
+                st.success("紀錄已清除！")
+                st.rerun()
+        else:
+            st.warning("目前尚無基金分類紀錄。上傳檔案後若有新基金，系統會請您設定。")
+    elif pwd_input != "":
+        st.error("密碼錯誤，拒絕存取。")
     else:
-        st.warning("目前尚無基金分類紀錄。上傳檔案後若有新基金，系統會請您設定。")
+        st.info("僅限國金部負責人員修改設定。")
 
 # ==========================================
 # 主畫面邏輯 
 # ==========================================
-# 1. 檔案上傳區
 uploaded_file = st.file_uploader("請上傳當月投信公會 Excel 檔 (會覆蓋伺服器舊資料)", type=['xls', 'xlsx'])
 
 if uploaded_file is not None:
@@ -105,11 +116,9 @@ if uploaded_file is not None:
                 st.session_state.raw_data = parsed_df
                 st.session_state.last_uploaded = uploaded_file.name
                 
-                # 新增：將解析後的資料存成實體檔案，分享給其他連線進來的人
                 parsed_df.to_csv(latest_data_file, index=False)
                 st.success("✅ 報表已成功上傳並更新至伺服器，其他同事重新整理網頁即可看見最新數據！")
 
-# 2. 資料處理與呈現
 if st.session_state.raw_data is not None:
     df = st.session_state.raw_data.copy()
     
@@ -122,17 +131,20 @@ if st.session_state.raw_data is not None:
     new_funds = current_funds[~current_funds['基金名稱'].isin(mapping_df['基金名稱'])]
 
     if not new_funds.empty:
-        st.warning(f"⚠️ 發現 {len(new_funds)} 檔系統未記錄的新基金！請在下方勾選是否為複委託：")
+        st.warning(f"⚠️ 發現 {len(new_funds)} 檔系統未記錄的新基金！請在左側輸入密碼解鎖後，在下方勾選是否為複委託：")
         new_funds['是複委託'] = False
         edited_new = st.data_editor(new_funds, key="edit_new", use_container_width=True)
         
-        if st.button("➕ 儲存新基金並繼續"):
-            mapping_df = pd.concat([mapping_df, edited_new], ignore_index=True)
-            mapping_df.to_csv(mapping_file, index=False)
-            st.success("新基金已儲存！請重新整理以檢視排名。")
-            st.rerun()
+        # 新基金的儲存也加上簡單的密碼驗證防護（必須在左側解鎖）
+        if pwd_input == ADMIN_PASSWORD:
+            if st.button("➕ 儲存新基金並繼續"):
+                mapping_df = pd.concat([mapping_df, edited_new], ignore_index=True)
+                mapping_df.to_csv(mapping_file, index=False)
+                st.success("新基金已儲存！請重新整理以檢視排名。")
+                st.rerun()
+        else:
+            st.error("請先在左側輸入管理員密碼，才能儲存新基金設定。")
     else:
-        # --- 計算排名 ---
         st.divider()
         st.subheader("🏆 複委託業務券商排名")
         
@@ -143,7 +155,7 @@ if st.session_state.raw_data is not None:
             col1, col2 = st.columns([1, 2])
             
             with col1:
-                # 排除空值並強制轉為字串，避免從 CSV 讀取時產生的 NaN 導致排序報錯
+                # 已修正：排除空值並轉為字串
                 available_brokers = sorted(sub_broker_df['券商'].dropna().astype(str).unique())
                 default_index = available_brokers.index('元大證券') if '元大證券' in available_brokers else 0
                 target_broker = st.selectbox("請選擇要觀察的券商：", available_brokers, index=default_index)
