@@ -143,7 +143,8 @@ if st.session_state.raw_data is not None:
             col1, col2 = st.columns([1, 2])
             
             with col1:
-                available_brokers = sorted(sub_broker_df['券商'].unique())
+                # 排除空值並強制轉為字串，避免從 CSV 讀取時產生的 NaN 導致排序報錯
+                available_brokers = sorted(sub_broker_df['券商'].dropna().astype(str).unique())
                 default_index = available_brokers.index('元大證券') if '元大證券' in available_brokers else 0
                 target_broker = st.selectbox("請選擇要觀察的券商：", available_brokers, index=default_index)
             
