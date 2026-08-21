@@ -9,8 +9,12 @@ st.set_page_config(page_title="投信公會券商排名分析系統", layout="wi
 REPORT_PERIOD = "2026/1月-7月"
 ADMIN_PASSWORD = "yuanta_admin"
 
-mapping_file = 'funds_mapping.csv'
-latest_data_file = 'latest_report.csv'
+# 抓取目前 Ranking.py 所在的資料夾路徑
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# 強制將存檔路徑綁定在跟程式碼同一個資料夾下
+mapping_file = os.path.join(BASE_DIR, 'funds_mapping.csv')
+latest_data_file = os.path.join(BASE_DIR, 'latest_report.csv')
 
 if 'raw_data' not in st.session_state:
     st.session_state.raw_data = None
