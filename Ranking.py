@@ -6,8 +6,8 @@ import os
 # --- 頁面與全域變數設定 ---
 st.set_page_config(page_title="投信公會券商排名分析系統", layout="wide")
 
-REPORT_PERIOD = "2026/1月-7月" 
-ADMIN_PASSWORD = "yuanta_admin" 
+REPORT_PERIOD = "2026/1月-7月"
+ADMIN_PASSWORD = "yuanta_admin"
 
 mapping_file = 'funds_mapping.csv'
 latest_data_file = 'latest_report.csv'
@@ -152,16 +152,14 @@ if st.session_state.raw_data is not None:
         sub_broker_df = merged_df[merged_df['是複委託'] == True]
 
         if not sub_broker_df.empty:
-            # 新增：選擇分析視角
             view_mode = st.radio(
                 "請選擇分析視角：", 
                 ["券商視角 (觀察特定券商在各投信的市佔)", "投信視角 (觀察特定投信下單給各券商的排名)"], 
                 horizontal=True
             )
             
-            st.write("") # 增加一點排版空間
+            st.write("") 
             
-            # 先將所有投信與券商的交易量加總
             amc_vol = sub_broker_df.groupby(['投信', '券商'])['交易金額'].sum().reset_index()
             
             col1, col2 = st.columns([1, 2])
@@ -172,7 +170,6 @@ if st.session_state.raw_data is not None:
                     default_index = available_brokers.index('元大證券') if '元大證券' in available_brokers else 0
                     target_broker = st.selectbox("請選擇要觀察的券商：", available_brokers, index=default_index)
                 
-                # 計算該券商在各投信內的排名
                 amc_vol['名次'] = amc_vol.groupby('投信')['交易金額'].rank(ascending=False, method='min').astype(int)
                 result = amc_vol[amc_vol['券商'] == target_broker].sort_values('交易金額', ascending=False)
                 result['交易金額'] = result['交易金額'].apply(lambda x: f"{x:,.0f}")
@@ -185,12 +182,9 @@ if st.session_state.raw_data is not None:
                     available_amcs = sorted(sub_broker_df['投信'].dropna().astype(str).unique())
                     target_amc = st.selectbox("請選擇要觀察的投信：", available_amcs)
                 
-                # 篩選特定投信的資料
                 result = amc_vol[amc_vol['投信'] == target_amc].sort_values('交易金額', ascending=False).reset_index(drop=True)
-                # 根據該投信內各券商的交易量排序給予名次
                 result['名次'] = result['交易金額'].rank(ascending=False, method='min').astype(int)
                 
-                # 重新排列顯示順序，讓畫面更直觀
                 result = result[['名次', '券商', '交易金額']]
                 result['交易金額'] = result['交易金額'].apply(lambda x: f"{x:,.0f}")
                 
