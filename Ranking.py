@@ -66,12 +66,10 @@ st.title(f"📊 投信公會券商排名分析系統 ({REPORT_PERIOD})")
 with st.sidebar:
     st.header("⚙️ 基金複委託設定檢視與管理")
     
-    # 所有人都能看見當前的設定狀態
     if os.path.exists(mapping_file):
         existing_mapping = pd.read_csv(mapping_file)
         st.write(f"目前資料庫已記錄 **{len(existing_mapping)}** 檔基金。")
         
-        # 密碼輸入框
         st.divider()
         st.write("🔒 **管理員修改區**")
         pwd_input = st.text_input("輸入密碼以解鎖編輯權限：", type="password")
@@ -79,7 +77,6 @@ with st.sidebar:
         if pwd_input == ADMIN_PASSWORD:
             st.success("✅ 已解鎖！您可以直接在下方表格修改設定。")
             
-            # 解鎖後：顯示可編輯的表格與儲存按鈕
             edited_mapping = st.data_editor(
                 existing_mapping, 
                 num_rows="dynamic", 
@@ -100,8 +97,6 @@ with st.sidebar:
             if pwd_input != "":
                 st.error("密碼錯誤。")
             st.info("目前為唯讀模式。")
-            
-            # 未解鎖時：顯示純檢視的表格 (唯讀)
             st.dataframe(existing_mapping, use_container_width=True, hide_index=True)
             
     else:
@@ -139,7 +134,6 @@ if st.session_state.raw_data is not None:
         st.warning(f"⚠️ 發現 {len(new_funds)} 檔系統未記錄的新基金！請在左側輸入密碼解鎖後，在下方勾選是否為複委託：")
         new_funds['是複委託'] = False
         
-        # 如果有解鎖，顯示可編輯表格；否則顯示唯讀
         if pwd_input == ADMIN_PASSWORD:
             edited_new = st.data_editor(new_funds, key="edit_new", use_container_width=True)
             if st.button("➕ 儲存新基金並繼續", type="primary"):
@@ -152,25 +146,56 @@ if st.session_state.raw_data is not None:
             st.error("🔒 請先在左側輸入管理員密碼解鎖，才能勾選與儲存新基金設定。")
     else:
         st.divider()
-        st.subheader("🏆 複委託業務券商排名")
+        st.subheader("🏆 複委託業務交易量分析")
         
         merged_df = df.merge(mapping_df, on="基金名稱", how="left")
         sub_broker_df = merged_df[merged_df['是複委託'] == True]
 
         if not sub_broker_df.empty:
+            # 新增：選擇分析視角
+            view_mode = st.radio(
+                "請選擇分析視角：", 
+                ["券商視角 (觀察特定券商在各投信的市佔)", "投信視角 (觀察特定投信下單給各券商的排名)"], 
+                horizontal=True
+            )
+            
+            st.write("") # 增加一點排版空間
+            
+            # 先將所有投信與券商的交易量加總
+            amc_vol = sub_broker_df.groupby(['投信', '券商'])['交易金額'].sum().reset_index()
+            
             col1, col2 = st.columns([1, 2])
             
-            with col1:
-                available_brokers = sorted(sub_broker_df['券商'].dropna().astype(str).unique())
-                default_index = available_brokers.index('元大證券') if '元大證券' in available_brokers else 0
-                target_broker = st.selectbox("請選擇要觀察的券商：", available_brokers, index=default_index)
-            
-            amc_vol = sub_broker_df.groupby(['投信', '券商'])['交易金額'].sum().reset_index()
-            amc_vol['名次'] = amc_vol.groupby('投信')['交易金額'].rank(ascending=False, method='min').astype(int)
-            result = amc_vol[amc_vol['券商'] == target_broker].sort_values('交易金額', ascending=False)
-            result['交易金額'] = result['交易金額'].apply(lambda x: f"{x:,.0f}")
-            
-            st.write(f"**{target_broker}** 在各投信複委託交易量的排名整理：")
-            st.dataframe(result, use_container_width=True, hide_index=True)
+            if "券商視角" in view_mode:
+                with col1:
+                    available_brokers = sorted(sub_broker_df['券商'].dropna().astype(str).unique())
+                    default_index = available_brokers.index('元大證券') if '元大證券' in available_brokers else 0
+                    target_broker = st.selectbox("請選擇要觀察的券商：", available_brokers, index=default_index)
+                
+                # 計算該券商在各投信內的排名
+                amc_vol['名次'] = amc_vol.groupby('投信')['交易金額'].rank(ascending=False, method='min').astype(int)
+                result = amc_vol[amc_vol['券商'] == target_broker].sort_values('交易金額', ascending=False)
+                result['交易金額'] = result['交易金額'].apply(lambda x: f"{x:,.0f}")
+                
+                st.write(f"**{target_broker}** 在各投信複委託交易量的排名整理：")
+                st.dataframe(result, use_container_width=True, hide_index=True)
+                
+            else:
+                with col1:
+                    available_amcs = sorted(sub_broker_df['投信'].dropna().astype(str).unique())
+                    target_amc = st.selectbox("請選擇要觀察的投信：", available_amcs)
+                
+                # 篩選特定投信的資料
+                result = amc_vol[amc_vol['投信'] == target_amc].sort_values('交易金額', ascending=False).reset_index(drop=True)
+                # 根據該投信內各券商的交易量排序給予名次
+                result['名次'] = result['交易金額'].rank(ascending=False, method='min').astype(int)
+                
+                # 重新排列顯示順序，讓畫面更直觀
+                result = result[['名次', '券商', '交易金額']]
+                result['交易金額'] = result['交易金額'].apply(lambda x: f"{x:,.0f}")
+                
+                st.write(f"**{target_amc}** 投信下單給各券商的複委託交易量排名：")
+                st.dataframe(result, use_container_width=True, hide_index=True)
+                
         else:
             st.info("目前勾選的複委託基金中，沒有找到對應的交易紀錄。請確認設定。")
