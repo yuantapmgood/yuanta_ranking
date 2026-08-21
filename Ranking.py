@@ -85,7 +85,7 @@ with st.sidebar:
             )
             
             if st.button("💾 儲存修改至資料庫", type="primary"):
-                edited_mapping.to_csv(mapping_file, index=False)
+                edited_mapping.to_csv(mapping_file, index=False, encoding='utf-8-sig')
                 st.success("設定已儲存！")
                 st.rerun()
                 
