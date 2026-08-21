@@ -92,7 +92,19 @@ with st.sidebar:
                 edited_mapping.to_csv(mapping_file, index=False, encoding='utf-8-sig')
                 st.success("設定已儲存！")
                 st.rerun()
-                
+# ===== 新增這段下載按鈕 =====
+            st.write("📥 **備份與發布**")
+            st.info("若要讓設定永久生效，請點擊下方下載，並手動上傳至 GitHub 覆蓋舊檔。")
+            
+            # 將目前的設定轉成可下載的格式
+            csv_data = edited_mapping.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            st.download_button(
+                label="下載 funds_mapping.csv",
+                data=csv_data,
+                file_name="funds_mapping.csv",
+                mime="text/csv",
+                type="secondary"
+            )                
             if st.button("🗑️ 清除所有基金分類紀錄"):
                 os.remove(mapping_file)
                 st.success("紀錄已清除！")
