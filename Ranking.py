@@ -116,7 +116,7 @@ if uploaded_file is not None:
                 st.session_state.raw_data = parsed_df
                 st.session_state.last_uploaded = uploaded_file.name
                 
-                parsed_df.to_csv(latest_data_file, index=False)
+                parsed_df.to_csv(latest_data_file, index=False, encoding='utf-8-sig')
                 st.success("✅ 報表已成功上傳並更新至伺服器！")
 
 if st.session_state.raw_data is not None:
@@ -138,7 +138,7 @@ if st.session_state.raw_data is not None:
             edited_new = st.data_editor(new_funds, key="edit_new", use_container_width=True)
             if st.button("➕ 儲存新基金並繼續", type="primary"):
                 mapping_df = pd.concat([mapping_df, edited_new], ignore_index=True)
-                mapping_df.to_csv(mapping_file, index=False)
+                mapping_df.to_csv(mapping_file, index=False, encoding='utf-8-sig')
                 st.success("新基金已儲存！請重新整理以檢視排名。")
                 st.rerun()
         else:
