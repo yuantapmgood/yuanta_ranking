@@ -16,14 +16,26 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 mapping_file = os.path.join(BASE_DIR, 'funds_mapping.csv')
 latest_data_file = os.path.join(BASE_DIR, 'latest_report.csv')
 
+# 初始化 Session State
 if 'raw_data' not in st.session_state:
     st.session_state.raw_data = None
+if 'fund_scale_data' not in st.session_state:
+    st.session_state.fund_scale_data = None
+if 'fund_manager_data' not in st.session_state:
+    st.session_state.fund_manager_data = None
 
 if st.session_state.raw_data is None and os.path.exists(latest_data_file):
     try:
         st.session_state.raw_data = pd.read_csv(latest_data_file)
     except Exception as e:
-        st.error("讀取伺服器暫存報表失敗，請重新上傳。")
+        st.error("讀取伺服器暫存排名報表失敗，請重新上傳。")
+
+# --- 基礎函數定義 ---
+def get_main_fund_name(name):
+    """取得主基金名稱，去除幣別與級別後綴"""
+    # 以括號、連字號或空白作為分隔，取第一段並清除頭尾空白
+    clean_name = re.split(r'[\(（\-\s]', str(name))[0].strip()
+    return clean_name
 
 @st.cache_data
 def process_raw_data(uploaded_file):
@@ -56,9 +68,41 @@ def process_raw_data(uploaded_file):
         df['券商'] = df['券商'].apply(clean_broker_name)
         df['交易金額'] = pd.to_numeric(df['交易金額'], errors='coerce').fillna(0)
         df['投信'] = df['基金名稱'].str[:2]
+        df['主基金名稱'] = df['基金名稱'].apply(get_main_fund_name)
         return df
     except Exception as e:
-        st.error(f"檔案解析失敗，請確認格式。錯誤訊息: {e}")
+        st.error(f"排名檔案解析失敗。錯誤訊息: {e}")
+        return None
+
+@st.cache_data
+def process_scale_data(uploaded_file):
+    """處理公會規模報表"""
+    try:
+        dfs = pd.read_html(uploaded_file)
+        df = dfs[0].iloc[1:].copy()
+        df.columns = dfs[0].iloc[0].tolist()
+        df['主基金名稱'] = df['基金名稱'].apply(get_main_fund_name)
+        df['基金規模 (台幣)'] = pd.to_numeric(df['基金規模 (台幣)'], errors='coerce').fillna(0)
+        # 加總同主基金的規模
+        grouped = df.groupby('主基金名稱')['基金規模 (台幣)'].sum().reset_index()
+        return grouped
+    except Exception as e:
+        st.error(f"規模檔案解析失敗。錯誤訊息: {e}")
+        return None
+
+@st.cache_data
+def process_manager_data(uploaded_file):
+    """處理公會基本資料報表(含經理人)"""
+    try:
+        dfs = pd.read_html(uploaded_file)
+        df = dfs[0].iloc[2:].copy()
+        df.columns = dfs[0].iloc[0].tolist()
+        df['主基金名稱'] = df['基金名稱'].apply(get_main_fund_name)
+        # 去除重複，每個主基金對應第一位抓到的經理人
+        managers = df[['主基金名稱', '經理 人姓名']].dropna(subset=['經理 人姓名']).drop_duplicates(subset=['主基金名稱'])
+        return managers
+    except Exception as e:
+        st.error(f"基本資料(經理人)檔案解析失敗。錯誤訊息: {e}")
         return None
 
 # --- UI 開始 ---
@@ -92,11 +136,10 @@ with st.sidebar:
                 edited_mapping.to_csv(mapping_file, index=False, encoding='utf-8-sig')
                 st.success("設定已儲存！")
                 st.rerun()
-# ===== 新增這段下載按鈕 =====
+                
             st.write("📥 **備份與發布**")
             st.info("若要讓設定永久生效，請點擊下方下載，並手動上傳至 GitHub 覆蓋舊檔。")
             
-            # 將目前的設定轉成可下載的格式
             csv_data = edited_mapping.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button(
                 label="下載 funds_mapping.csv",
@@ -105,6 +148,7 @@ with st.sidebar:
                 mime="text/csv",
                 type="secondary"
             )                
+                
             if st.button("🗑️ 清除所有基金分類紀錄"):
                 os.remove(mapping_file)
                 st.success("紀錄已清除！")
@@ -120,21 +164,40 @@ with st.sidebar:
         pwd_input = st.text_input("輸入密碼以解鎖新基金設定：", type="password")
 
 # ==========================================
-# 主畫面邏輯 
+# 主畫面邏輯 - 檔案上傳區
 # ==========================================
-uploaded_file = st.file_uploader("請上傳當月投信公會 Excel 檔 (會覆蓋伺服器舊資料)", type=['xls', 'xlsx'])
+with st.expander("📁 點擊上傳 / 更新公會報表資料", expanded=(st.session_state.raw_data is None)):
+    col_upload1, col_upload2, col_upload3 = st.columns(3)
+    with col_upload1:
+        file_rank = st.file_uploader("1. 排名報表 (必傳)", type=['xls', 'xlsx'], key="f1")
+    with col_upload2:
+        file_scale = st.file_uploader("2. 規模報表 (選傳)", type=['xls', 'xlsx'], key="f2")
+    with col_upload3:
+        file_manager = st.file_uploader("3. 基本資料(經理人) (選傳)", type=['xls', 'xlsx'], key="f3")
 
-if uploaded_file is not None:
-    if 'last_uploaded' not in st.session_state or st.session_state.last_uploaded != uploaded_file.name:
-        with st.spinner("正在解析檔案中..."):
-            parsed_df = process_raw_data(uploaded_file)
-            if parsed_df is not None:
-                st.session_state.raw_data = parsed_df
-                st.session_state.last_uploaded = uploaded_file.name
+    if st.button("上傳並解析檔案", type="primary"):
+        if file_rank is not None:
+            with st.spinner("正在解析排名檔案..."):
+                parsed_df = process_raw_data(file_rank)
+                if parsed_df is not None:
+                    st.session_state.raw_data = parsed_df
+                    parsed_df.to_csv(latest_data_file, index=False, encoding='utf-8-sig')
+        
+        if file_scale is not None:
+            with st.spinner("正在解析規模檔案..."):
+                st.session_state.fund_scale_data = process_scale_data(file_scale)
                 
-                parsed_df.to_csv(latest_data_file, index=False, encoding='utf-8-sig')
-                st.success("✅ 報表已成功上傳並更新至伺服器！")
+        if file_manager is not None:
+            with st.spinner("正在解析經理人檔案..."):
+                st.session_state.fund_manager_data = process_manager_data(file_manager)
+                
+        if file_rank is not None:
+            st.success("✅ 檔案處理完成！請重新整理檢視結果。")
+            st.rerun()
 
+# ==========================================
+# 資料處理與呈現區
+# ==========================================
 if st.session_state.raw_data is not None:
     df = st.session_state.raw_data.copy()
     
@@ -173,13 +236,12 @@ if st.session_state.raw_data is not None:
                 ["券商視角 (觀察特定券商在各投信的市佔)", "投信視角 (觀察特定投信下單給各券商的排名)"], 
                 horizontal=True
             )
-            
             st.write("") 
             
             amc_vol = sub_broker_df.groupby(['投信', '券商'])['交易金額'].sum().reset_index()
-            
             col1, col2 = st.columns([1, 2])
             
+            # --- 排名主表格顯示邏輯 ---
             if "券商視角" in view_mode:
                 with col1:
                     available_brokers = sorted(sub_broker_df['券商'].dropna().astype(str).unique())
@@ -193,6 +255,9 @@ if st.session_state.raw_data is not None:
                 st.write(f"**{target_broker}** 在各投信複委託交易量的排名整理：")
                 st.dataframe(result, use_container_width=True, hide_index=True)
                 
+                # 取得該券商有交易紀錄的所有複委託主基金
+                target_funds_raw = sub_broker_df[sub_broker_df['券商'] == target_broker]
+                
             else:
                 with col1:
                     available_amcs = sorted(sub_broker_df['投信'].dropna().astype(str).unique())
@@ -200,12 +265,39 @@ if st.session_state.raw_data is not None:
                 
                 result = amc_vol[amc_vol['投信'] == target_amc].sort_values('交易金額', ascending=False).reset_index(drop=True)
                 result['名次'] = result['交易金額'].rank(ascending=False, method='min').astype(int)
-                
                 result = result[['名次', '券商', '交易金額']]
                 result['交易金額'] = result['交易金額'].apply(lambda x: f"{x:,.0f}")
                 
                 st.write(f"**{target_amc}** 投信下單給各券商的複委託交易量排名：")
                 st.dataframe(result, use_container_width=True, hide_index=True)
                 
+                # 取得該投信下的所有複委託主基金
+                target_funds_raw = sub_broker_df[sub_broker_df['投信'] == target_amc]
+
+            # --- 附加功能：基金明細與規模、經理人 ---
+            with st.expander("🔍 點擊查看納入計算之基金明細 (需上傳規模與經理人報表)"):
+                # 整理出該視角下的主基金清單去重複
+                funds_list = target_funds_raw[['投信', '主基金名稱']].drop_duplicates()
+                
+                # 若有上傳規模與經理人資料，進行合併
+                if st.session_state.fund_scale_data is not None:
+                    funds_list = funds_list.merge(st.session_state.fund_scale_data, on='主基金名稱', how='left')
+                    # 將規模轉為「億」為單位顯示，比較乾淨
+                    funds_list['基金規模 (億台幣)'] = (funds_list['基金規模 (台幣)'] / 100000000).fillna(0).round(2)
+                    funds_list = funds_list.drop(columns=['基金規模 (台幣)'])
+                else:
+                    funds_list['基金規模 (億台幣)'] = "未上傳規模資料"
+                    
+                if st.session_state.fund_manager_data is not None:
+                    funds_list = funds_list.merge(st.session_state.fund_manager_data, on='主基金名稱', how='left')
+                    funds_list.rename(columns={'經理 人姓名': '基金經理人'}, inplace=True)
+                    funds_list['基金經理人'] = funds_list['基金經理人'].fillna("查無資料")
+                else:
+                    funds_list['基金經理人'] = "未上傳經理人資料"
+                
+                # 依照投信、主基金排序並調整欄位順序
+                funds_list = funds_list.sort_values(by=['投信', '主基金名稱'])
+                st.dataframe(funds_list, use_container_width=True, hide_index=True)
+
         else:
             st.info("目前勾選的複委託基金中，沒有找到對應的交易紀錄。請確認設定。")
