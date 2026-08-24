@@ -47,10 +47,21 @@ if st.session_state.fund_manager_data is None and os.path.exists(manager_data_fi
     except Exception:
         pass
 
-# --- 基礎函數定義 ---
+# ====================================================================
+# 新版基礎函數定義：精準萃取主基金名稱
+# ====================================================================
 def get_main_fund_name(name):
-    """取得主基金名稱，作為與排名報表橋接的文字依據"""
-    clean_name = re.split(r'[\(（\-\s]', str(name))[0].strip()
+    """取得主基金名稱，智慧保留正常空格與減號，僅去除幣別與級別後綴"""
+    # 1. 移除警告語 (括號後面的內容，連同前面的多餘空白一起去掉)
+    clean_name = re.split(r'\s*[\(（]', str(name))[0].strip()
+    
+    # 2. 移除常見的級別與幣別後綴 (遇到 hyphen 且後面跟著特定字眼時才切割)
+    suffixes = r'(?:[A-Za-z]+[類型別]|累積|配息|收益|新臺幣|新台幣|美元|美金|人民幣|日圓|澳幣|南非幣|後收|各級別)'
+    clean_name = re.split(rf'-{suffixes}', clean_name)[0].strip()
+    
+    # 3. 移除尾隨的單一字母或特定英文級別 (如 -A, -B, -N, -TISA)
+    clean_name = re.sub(r'-([A-Za-z]|TISA)$', '', clean_name).strip()
+    
     return clean_name
 
 def get_base_id(fund_id):
