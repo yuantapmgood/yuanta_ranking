@@ -45,10 +45,24 @@ def get_base_id(fund_id):
         return match.group(1)
     return str(fund_id).strip()
 
+# --- 強化版 HTML 讀取函數 (解決公會檔案亂碼導致資料截斷的問題) ---
+def robust_read_html(uploaded_file):
+    """將上傳的檔案以二進位讀取，強制用 Big5 解碼忽略錯誤，再交給 Pandas"""
+    uploaded_file.seek(0)
+    raw_bytes = uploaded_file.read()
+    
+    try:
+        html_str = raw_bytes.decode('big5', errors='ignore')
+    except:
+        html_str = raw_bytes.decode('utf-8', errors='ignore')
+        
+    dfs = pd.read_html(html_str, flavor='lxml')
+    return dfs
+
 @st.cache_data
 def process_raw_data(uploaded_file):
     try:
-        dfs = pd.read_html(uploaded_file)
+        dfs = robust_read_html(uploaded_file)
         df = dfs[0].iloc[2:].copy()
         df.columns = ["基金名稱", "名次", "券商", "總手續費", "總手續費占比", "交易金額", "股票手續費", "平均手續費率"]
         
@@ -86,7 +100,7 @@ def process_raw_data(uploaded_file):
 def process_scale_data(uploaded_file):
     """處理公會規模報表 - 透過統編數字主體進行加總"""
     try:
-        dfs = pd.read_html(uploaded_file)
+        dfs = robust_read_html(uploaded_file)
         df = dfs[0].iloc[1:].copy()
         df.columns = dfs[0].iloc[0].tolist()
         
@@ -96,7 +110,7 @@ def process_scale_data(uploaded_file):
         
         # 利用統編數字主體將規模加總
         grouped = df.groupby('主基金統編').agg({
-            '基金名稱': 'first', # 保留一組名稱用來萃取文字橋接欄位
+            '基金名稱': 'first',
             '基金規模 (台幣)': 'sum'
         }).reset_index()
         
@@ -110,7 +124,7 @@ def process_scale_data(uploaded_file):
 def process_manager_data(uploaded_file):
     """處理公會基本資料報表(含經理人) - 透過統編數字主體進行對應"""
     try:
-        dfs = pd.read_html(uploaded_file)
+        dfs = robust_read_html(uploaded_file)
         df = dfs[0].iloc[2:].copy()
         df.columns = dfs[0].iloc[0].tolist()
         
