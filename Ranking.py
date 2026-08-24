@@ -32,10 +32,18 @@ if st.session_state.raw_data is None and os.path.exists(latest_data_file):
 
 # --- 基礎函數定義 ---
 def get_main_fund_name(name):
-    """取得主基金名稱，去除幣別與級別後綴"""
-    # 以括號、連字號或空白作為分隔，取第一段並清除頭尾空白
+    """取得主基金名稱，作為與排名報表橋接的文字依據"""
     clean_name = re.split(r'[\(（\-\s]', str(name))[0].strip()
     return clean_name
+
+def get_base_id(fund_id):
+    """提取基金統編的數字主體 (如 00526748A -> 00526748)"""
+    if pd.isna(fund_id):
+        return None
+    match = re.search(r'^(\d+)', str(fund_id).strip())
+    if match:
+        return match.group(1)
+    return str(fund_id).strip()
 
 @st.cache_data
 def process_raw_data(uploaded_file):
@@ -76,31 +84,46 @@ def process_raw_data(uploaded_file):
 
 @st.cache_data
 def process_scale_data(uploaded_file):
-    """處理公會規模報表"""
+    """處理公會規模報表 - 透過統編數字主體進行加總"""
     try:
         dfs = pd.read_html(uploaded_file)
         df = dfs[0].iloc[1:].copy()
         df.columns = dfs[0].iloc[0].tolist()
-        df['主基金名稱'] = df['基金名稱'].apply(get_main_fund_name)
+        
+        # 提取統編數字並轉換金額格式
+        df['主基金統編'] = df['基金統編'].apply(get_base_id)
         df['基金規模 (台幣)'] = pd.to_numeric(df['基金規模 (台幣)'], errors='coerce').fillna(0)
-        # 加總同主基金的規模
-        grouped = df.groupby('主基金名稱')['基金規模 (台幣)'].sum().reset_index()
-        return grouped
+        
+        # 利用統編數字主體將規模加總
+        grouped = df.groupby('主基金統編').agg({
+            '基金名稱': 'first', # 保留一組名稱用來萃取文字橋接欄位
+            '基金規模 (台幣)': 'sum'
+        }).reset_index()
+        
+        grouped['主基金名稱'] = grouped['基金名稱'].apply(get_main_fund_name)
+        return grouped[['主基金名稱', '基金規模 (台幣)']]
     except Exception as e:
         st.error(f"規模檔案解析失敗。錯誤訊息: {e}")
         return None
 
 @st.cache_data
 def process_manager_data(uploaded_file):
-    """處理公會基本資料報表(含經理人)"""
+    """處理公會基本資料報表(含經理人) - 透過統編數字主體進行對應"""
     try:
         dfs = pd.read_html(uploaded_file)
         df = dfs[0].iloc[2:].copy()
         df.columns = dfs[0].iloc[0].tolist()
-        df['主基金名稱'] = df['基金名稱'].apply(get_main_fund_name)
-        # 去除重複，每個主基金對應第一位抓到的經理人
-        managers = df[['主基金名稱', '經理 人姓名']].dropna(subset=['經理 人姓名']).drop_duplicates(subset=['主基金名稱'])
-        return managers
+        
+        df['主基金統編'] = df['基金統編'].apply(get_base_id)
+        
+        # 利用統編數字主體群組化，確保同一基金只會對應到一位經理人
+        managers = df.dropna(subset=['經理 人姓名']).groupby('主基金統編').agg({
+            '基金名稱': 'first',
+            '經理 人姓名': 'first'
+        }).reset_index()
+        
+        managers['主基金名稱'] = managers['基金名稱'].apply(get_main_fund_name)
+        return managers[['主基金名稱', '經理 人姓名']]
     except Exception as e:
         st.error(f"基本資料(經理人)檔案解析失敗。錯誤訊息: {e}")
         return None
@@ -255,7 +278,6 @@ if st.session_state.raw_data is not None:
                 st.write(f"**{target_broker}** 在各投信複委託交易量的排名整理：")
                 st.dataframe(result, use_container_width=True, hide_index=True)
                 
-                # 取得該券商有交易紀錄的所有複委託主基金
                 target_funds_raw = sub_broker_df[sub_broker_df['券商'] == target_broker]
                 
             else:
@@ -271,18 +293,14 @@ if st.session_state.raw_data is not None:
                 st.write(f"**{target_amc}** 投信下單給各券商的複委託交易量排名：")
                 st.dataframe(result, use_container_width=True, hide_index=True)
                 
-                # 取得該投信下的所有複委託主基金
                 target_funds_raw = sub_broker_df[sub_broker_df['投信'] == target_amc]
 
             # --- 附加功能：基金明細與規模、經理人 ---
             with st.expander("🔍 點擊查看納入計算之基金明細 (需上傳規模與經理人報表)"):
-                # 整理出該視角下的主基金清單去重複
                 funds_list = target_funds_raw[['投信', '主基金名稱']].drop_duplicates()
                 
-                # 若有上傳規模與經理人資料，進行合併
                 if st.session_state.fund_scale_data is not None:
                     funds_list = funds_list.merge(st.session_state.fund_scale_data, on='主基金名稱', how='left')
-                    # 將規模轉為「億」為單位顯示，比較乾淨
                     funds_list['基金規模 (億台幣)'] = (funds_list['基金規模 (台幣)'] / 100000000).fillna(0).round(2)
                     funds_list = funds_list.drop(columns=['基金規模 (台幣)'])
                 else:
@@ -295,7 +313,6 @@ if st.session_state.raw_data is not None:
                 else:
                     funds_list['基金經理人'] = "未上傳經理人資料"
                 
-                # 依照投信、主基金排序並調整欄位順序
                 funds_list = funds_list.sort_values(by=['投信', '主基金名稱'])
                 st.dataframe(funds_list, use_container_width=True, hide_index=True)
 
