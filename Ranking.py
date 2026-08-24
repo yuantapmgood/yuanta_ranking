@@ -16,6 +16,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # 強制將存檔路徑綁定在跟程式碼同一個資料夾下
 mapping_file = os.path.join(BASE_DIR, 'funds_mapping.csv')
 latest_data_file = os.path.join(BASE_DIR, 'latest_report.csv')
+# 新增：規模與經理人的快取存檔路徑
+scale_data_file = os.path.join(BASE_DIR, 'scale_report.csv')
+manager_data_file = os.path.join(BASE_DIR, 'manager_report.csv')
 
 # 初始化 Session State
 if 'raw_data' not in st.session_state:
@@ -25,11 +28,24 @@ if 'fund_scale_data' not in st.session_state:
 if 'fund_manager_data' not in st.session_state:
     st.session_state.fund_manager_data = None
 
+# 啟動時：自動讀取 GitHub / 伺服器上已存在的 CSV 快取檔案
 if st.session_state.raw_data is None and os.path.exists(latest_data_file):
     try:
         st.session_state.raw_data = pd.read_csv(latest_data_file)
-    except Exception as e:
-        st.error("讀取伺服器暫存排名報表失敗，請重新上傳。")
+    except Exception:
+        pass
+
+if st.session_state.fund_scale_data is None and os.path.exists(scale_data_file):
+    try:
+        st.session_state.fund_scale_data = pd.read_csv(scale_data_file)
+    except Exception:
+        pass
+
+if st.session_state.fund_manager_data is None and os.path.exists(manager_data_file):
+    try:
+        st.session_state.fund_manager_data = pd.read_csv(manager_data_file)
+    except Exception:
+        pass
 
 # --- 基礎函數定義 ---
 def get_main_fund_name(name):
@@ -46,24 +62,18 @@ def get_base_id(fund_id):
         return match.group(1)
     return str(fund_id).strip()
 
-# ====================================================================
-# 新增：智慧型 HTML 讀取函數 (解決公會檔案多種編碼混亂、讀取被截斷的問題)
-# ====================================================================
 def robust_read_html(uploaded_file):
     uploaded_file.seek(0)
     raw_bytes = uploaded_file.read()
     
-    # 偵測是否為帶有 BOM 標籤的 UTF-8 (如：規模報表)
     if raw_bytes.startswith(b'\xef\xbb\xbf'):
         html_str = raw_bytes.decode('utf-8-sig', errors='ignore')
     else:
-        # 盲測：先試 utf-8，失敗則退回 big5 (如：排名報表與經理人報表)
         try:
             html_str = raw_bytes.decode('utf-8', errors='strict')
         except:
             html_str = raw_bytes.decode('big5', errors='ignore')
             
-    # 將解碼後的字串包裝成虛擬文字檔，確保 Pandas 能完整讀取 4000 多行
     virtual_file = io.StringIO(html_str)
     dfs = pd.read_html(virtual_file, flavor='lxml')
     return dfs
@@ -71,7 +81,7 @@ def robust_read_html(uploaded_file):
 @st.cache_data
 def process_raw_data(uploaded_file):
     try:
-        dfs = robust_read_html(uploaded_file) # 使用強化版讀取
+        dfs = robust_read_html(uploaded_file)
         df = dfs[0].iloc[2:].copy()
         df.columns = ["基金名稱", "名次", "券商", "總手續費", "總手續費占比", "交易金額", "股票手續費", "平均手續費率"]
         
@@ -107,19 +117,16 @@ def process_raw_data(uploaded_file):
 
 @st.cache_data
 def process_scale_data(uploaded_file):
-    """處理公會規模報表 - 透過統編數字主體進行加總"""
     try:
-        dfs = robust_read_html(uploaded_file) # 使用強化版讀取
+        dfs = robust_read_html(uploaded_file)
         df = dfs[0].iloc[1:].copy()
         df.columns = dfs[0].iloc[0].tolist()
         
-        # 提取統編數字並轉換金額格式
         df['主基金統編'] = df['基金統編'].apply(get_base_id)
         df['基金規模 (台幣)'] = pd.to_numeric(df['基金規模 (台幣)'], errors='coerce').fillna(0)
         
-        # 利用統編數字主體將規模加總
         grouped = df.groupby('主基金統編').agg({
-            '基金名稱': 'first', # 保留一組名稱用來萃取文字橋接欄位
+            '基金名稱': 'first',
             '基金規模 (台幣)': 'sum'
         }).reset_index()
         
@@ -131,15 +138,13 @@ def process_scale_data(uploaded_file):
 
 @st.cache_data
 def process_manager_data(uploaded_file):
-    """處理公會基本資料報表(含經理人) - 透過統編數字主體進行對應"""
     try:
-        dfs = robust_read_html(uploaded_file) # 使用強化版讀取
+        dfs = robust_read_html(uploaded_file)
         df = dfs[0].iloc[2:].copy()
         df.columns = dfs[0].iloc[0].tolist()
         
         df['主基金統編'] = df['基金統編'].apply(get_base_id)
         
-        # 利用統編數字主體群組化，確保同一基金只會對應到一位經理人
         managers = df.dropna(subset=['經理 人姓名']).groupby('主基金統編').agg({
             '基金名稱': 'first',
             '經理 人姓名': 'first'
@@ -148,7 +153,7 @@ def process_manager_data(uploaded_file):
         managers['主基金名稱'] = managers['基金名稱'].apply(get_main_fund_name)
         return managers[['主基金名稱', '經理 人姓名']]
     except Exception as e:
-        st.error(f"基本資料(經理人)檔案解析失敗。錯誤訊息: {e}")
+        st.error(f"基本資料檔案解析失敗。錯誤訊息: {e}")
         return None
 
 # --- UI 開始 ---
@@ -231,15 +236,43 @@ with st.expander("📁 點擊上傳 / 更新公會報表資料", expanded=(st.se
         
         if file_scale is not None:
             with st.spinner("正在解析規模檔案..."):
-                st.session_state.fund_scale_data = process_scale_data(file_scale)
+                parsed_scale = process_scale_data(file_scale)
+                if parsed_scale is not None:
+                    st.session_state.fund_scale_data = parsed_scale
+                    parsed_scale.to_csv(scale_data_file, index=False, encoding='utf-8-sig')
                 
         if file_manager is not None:
             with st.spinner("正在解析經理人檔案..."):
-                st.session_state.fund_manager_data = process_manager_data(file_manager)
+                parsed_manager = process_manager_data(file_manager)
+                if parsed_manager is not None:
+                    st.session_state.fund_manager_data = parsed_manager
+                    parsed_manager.to_csv(manager_data_file, index=False, encoding='utf-8-sig')
                 
-        if file_rank is not None:
-            st.success("✅ 檔案處理完成！請重新整理檢視結果。")
+        if file_rank is not None or file_scale is not None or file_manager is not None:
+            st.success("✅ 檔案處理完成！")
             st.rerun()
+
+    # --- 供 GitHub 長期備份用的 CSV 下載區 ---
+    if st.session_state.raw_data is not None or st.session_state.fund_scale_data is not None:
+        st.divider()
+        st.write("📥 **下載處理好的快取檔案 (供上傳至 GitHub 以永久保存)**")
+        st.caption("將下方檔案上傳至 GitHub 後，同事開啟網頁即可直接看到最新資料，無需重新解析。")
+        dl_col1, dl_col2, dl_col3 = st.columns(3)
+        
+        if st.session_state.raw_data is not None:
+            with dl_col1:
+                csv_rank = st.session_state.raw_data.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                st.download_button("📥 下載 latest_report.csv", csv_rank, "latest_report.csv", "text/csv")
+                
+        if st.session_state.fund_scale_data is not None:
+            with dl_col2:
+                csv_scale = st.session_state.fund_scale_data.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                st.download_button("📥 下載 scale_report.csv", csv_scale, "scale_report.csv", "text/csv")
+                
+        if st.session_state.fund_manager_data is not None:
+            with dl_col3:
+                csv_mgr = st.session_state.fund_manager_data.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                st.download_button("📥 下載 manager_report.csv", csv_mgr, "manager_report.csv", "text/csv")
 
 # ==========================================
 # 資料處理與呈現區
@@ -319,7 +352,7 @@ if st.session_state.raw_data is not None:
                 target_funds_raw = sub_broker_df[sub_broker_df['投信'] == target_amc]
 
             # --- 附加功能：基金明細與規模、經理人 ---
-            with st.expander("🔍 點擊查看納入計算之基金明細 (需上傳規模與經理人報表)"):
+            with st.expander("🔍 點擊查看納入計算之基金明細 (自動載入快取資料)"):
                 funds_list = target_funds_raw[['投信', '主基金名稱']].drop_duplicates()
                 
                 if st.session_state.fund_scale_data is not None:
