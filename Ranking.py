@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import os
+import io
 
 # --- 頁面與全域變數設定 ---
 st.set_page_config(page_title="投信公會券商排名分析系統", layout="wide")
@@ -55,6 +56,9 @@ def robust_read_html(uploaded_file):
         html_str = raw_bytes.decode('big5', errors='ignore')
     except:
         html_str = raw_bytes.decode('utf-8', errors='ignore')
+        
+# 將字串包裝成虛擬文字檔，避免 Pandas 誤認為是檔案路徑
+    virtual_file = io.StringIO(html_str)
         
     dfs = pd.read_html(html_str, flavor='lxml')
     return dfs
