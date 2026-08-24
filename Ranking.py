@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import os
+import io  # 必須引入這個套件來處理虛擬檔案
 
 # --- 頁面與全域變數設定 ---
 st.set_page_config(page_title="投信公會券商排名分析系統", layout="wide")
@@ -45,10 +46,39 @@ def get_base_id(fund_id):
         return match.group(1)
     return str(fund_id).strip()
 
+# --- 智慧型 HTML 讀取函數 (解決公會檔案多種編碼混亂的問題) ---
+def robust_read_html(uploaded_file):
+    """將上傳的檔案以二進位讀取，智慧偵測編碼解碼後，轉為虛擬檔案交給 Pandas"""
+    uploaded_file.seek(0)
+    raw_bytes = uploaded_file.read()
+    
+    # 1. 偵測是否為帶有 BOM 標籤的 UTF-8 (如：規模報表)
+    if raw_bytes.startswith(b'\xef\xbb\xbf'):
+        html_str = raw_bytes.decode('utf-8-sig', errors='ignore')
+    else:
+        # 2. 從原始碼前500字元偵測宣告的編碼格式
+        sample = raw_bytes[:500].decode('ascii', errors='ignore').lower()
+        if 'charset=utf-8' in sample:
+            html_str = raw_bytes.decode('utf-8', errors='ignore')
+        elif 'charset=big5' in sample:
+            html_str = raw_bytes.decode('big5', errors='ignore')
+        else:
+            # 3. 盲測：先試 utf-8，失敗則退回 big5 (如：排名報表與經理人報表)
+            try:
+                html_str = raw_bytes.decode('utf-8', errors='strict')
+            except:
+                html_str = raw_bytes.decode('big5', errors='ignore')
+                
+    # 將解碼後的字串包裝成虛擬文字檔 (解決 Errno 2 的報錯)
+    virtual_file = io.StringIO(html_str)
+    
+    dfs = pd.read_html(virtual_file, flavor='lxml')
+    return dfs
+
 @st.cache_data
 def process_raw_data(uploaded_file):
     try:
-        dfs = pd.read_html(uploaded_file)
+        dfs = robust_read_html(uploaded_file)
         df = dfs[0].iloc[2:].copy()
         df.columns = ["基金名稱", "名次", "券商", "總手續費", "總手續費占比", "交易金額", "股票手續費", "平均手續費率"]
         
@@ -86,7 +116,7 @@ def process_raw_data(uploaded_file):
 def process_scale_data(uploaded_file):
     """處理公會規模報表 - 透過統編數字主體進行加總"""
     try:
-        dfs = pd.read_html(uploaded_file)
+        dfs = robust_read_html(uploaded_file)
         df = dfs[0].iloc[1:].copy()
         df.columns = dfs[0].iloc[0].tolist()
         
@@ -96,7 +126,7 @@ def process_scale_data(uploaded_file):
         
         # 利用統編數字主體將規模加總
         grouped = df.groupby('主基金統編').agg({
-            '基金名稱': 'first', # 保留一組名稱用來萃取文字橋接欄位
+            '基金名稱': 'first',
             '基金規模 (台幣)': 'sum'
         }).reset_index()
         
@@ -110,7 +140,7 @@ def process_scale_data(uploaded_file):
 def process_manager_data(uploaded_file):
     """處理公會基本資料報表(含經理人) - 透過統編數字主體進行對應"""
     try:
-        dfs = pd.read_html(uploaded_file)
+        dfs = robust_read_html(uploaded_file)
         df = dfs[0].iloc[2:].copy()
         df.columns = dfs[0].iloc[0].tolist()
         
