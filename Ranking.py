@@ -54,18 +54,16 @@ def get_main_fund_name(name):
     """取得主基金名稱：精準排除警語，並利用『最後一個基金』神邏輯截斷雜訊"""
     clean_name = str(name).strip()
     
-    # 1. 專門切除公會的警語括號 (特徵：括號內開頭為「本基金」或「基金之」)
-    # 這可以避免誤砍正常的括號，例如 "元大美國政府20年期(以上)債券ETF基金"
+    # 1. 專門切除公會的警語括號 (特徵：括號內開頭為「本基金」或「基金之」或「基金有」)
     clean_name = re.sub(r'\s*[\(（](本基金|基金之|基金有).*?[\)）]', '', clean_name).strip()
     
-    # 2. 【使用者神邏輯】尋找「基金」兩字，直接截斷到「最後一個基金」為止
+    # 2. 尋找「基金」兩字，直接截斷到「最後一個基金」為止
     if "基金" in clean_name:
         match = re.match(r'^(.*基金)', clean_name)
         if match:
             clean_name = match.group(1).strip()
     else:
-        # 3. 處理少數沒有「基金」兩字的純 ETF (例如 "富邦NASDAQ-100 ETF")
-        # 移除可能黏在後面的常見級別與幣別後綴
+        # 3. 處理少數沒有「基金」兩字的純 ETF
         suffixes = r'(?:[A-Za-z]+[類型別]|累積|配息|收益|新臺幣|新台幣|美元|美金|人民幣|日圓|澳幣|南非幣|後收|各級別)'
         clean_name = re.split(rf'-{suffixes}', clean_name)[0].strip()
         clean_name = re.sub(r'-([A-Za-z]+)$', '', clean_name).strip()
@@ -127,7 +125,22 @@ def process_raw_data(uploaded_file):
             
         df['券商'] = df['券商'].apply(clean_broker_name)
         df['交易金額'] = pd.to_numeric(df['交易金額'], errors='coerce').fillna(0)
-        df['投信'] = df['基金名稱'].str[:4]
+        
+        # 新增：投信名稱智慧萃取
+        def extract_amc_name(fund_name):
+            name = str(fund_name)
+            # 大於兩個字的特殊投信白名單
+            special_amcs = [
+                '中國信託', '第一金', '大華銀', '華南永昌', '富蘭克林華美', 
+                '貝萊德', '鋒裕匯理', '路博邁', '施羅德', '保德信', 'PGIM保德信', '台中銀'
+            ]
+            for amc in special_amcs:
+                if name.startswith(amc):
+                    return amc + '投信'
+            # 預設：取前兩個字加投信 (適用於元大、群益、國泰、富邦、野村、安聯等)
+            return name[:2] + '投信'
+            
+        df['投信'] = df['基金名稱'].apply(extract_amc_name)
         df['主基金名稱'] = df['基金名稱'].apply(get_main_fund_name)
         return df
     except Exception as e:
