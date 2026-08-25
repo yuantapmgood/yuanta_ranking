@@ -51,24 +51,24 @@ if st.session_state.fund_manager_data is None and os.path.exists(manager_data_fi
 # 新版基礎函數定義：精準萃取主基金名稱
 # ====================================================================
 def get_main_fund_name(name):
-    """取得主基金名稱：直接攔截到『最後一個基金』為止"""
+    """取得主基金名稱：精準排除警語，並利用『最後一個基金』神邏輯截斷雜訊"""
     clean_name = str(name).strip()
     
-    # 1. 移除警告語或括號內的資訊 (包含全半形括號)
-    # 例如："基金名稱(累積型-美元)" -> "基金名稱"
-    clean_name = re.split(r'\s*[\(（]', clean_name)[0].strip()
+    # 1. 專門切除公會的警語括號 (特徵：括號內開頭為「本基金」或「基金之」)
+    # 這可以避免誤砍正常的括號，例如 "元大美國政府20年期(以上)債券ETF基金"
+    clean_name = re.sub(r'\s*[\(（](本基金|基金之|基金有).*?[\)）]', '', clean_name).strip()
     
     # 2. 【使用者神邏輯】尋找「基金」兩字，直接截斷到「最後一個基金」為止
-    # 這樣可以完美砍掉後面的 NA, -A, A類型, 累積型 等等任何五花八門的雜訊
     if "基金" in clean_name:
-        # 正則表達式 '^(.*基金)' 會貪婪配對到最後一個出現的「基金」
         match = re.match(r'^(.*基金)', clean_name)
         if match:
             clean_name = match.group(1).strip()
     else:
-        # 3. 處理少數名稱內沒有「基金」兩個字的純 ETF (例如 "富邦NASDAQ-100 ETF")
-        # 直接保留去括號後的原名，不做多餘切割，避免破壞 NASDAQ-100
-        pass
+        # 3. 處理少數沒有「基金」兩字的純 ETF (例如 "富邦NASDAQ-100 ETF")
+        # 移除可能黏在後面的常見級別與幣別後綴
+        suffixes = r'(?:[A-Za-z]+[類型別]|累積|配息|收益|新臺幣|新台幣|美元|美金|人民幣|日圓|澳幣|南非幣|後收|各級別)'
+        clean_name = re.split(rf'-{suffixes}', clean_name)[0].strip()
+        clean_name = re.sub(r'-([A-Za-z]+)$', '', clean_name).strip()
         
     return clean_name
 
