@@ -126,10 +126,9 @@ def process_raw_data(uploaded_file):
         df['券商'] = df['券商'].apply(clean_broker_name)
         df['交易金額'] = pd.to_numeric(df['交易金額'], errors='coerce').fillna(0)
         
-        # 新增：投信名稱智慧萃取
+        # 投信名稱智慧萃取
         def extract_amc_name(fund_name):
             name = str(fund_name)
-            # 大於兩個字的特殊投信白名單
             special_amcs = [
                 '中國信託', '第一金', '大華銀', '華南永昌', '富蘭克林華美', 
                 '貝萊德', '鋒裕匯理', '路博邁', '施羅德', '保德信', 'PGIM保德信', '台中銀'
@@ -137,7 +136,6 @@ def process_raw_data(uploaded_file):
             for amc in special_amcs:
                 if name.startswith(amc):
                     return amc + '投信'
-            # 預設：取前兩個字加投信 (適用於元大、群益、國泰、富邦、野村、安聯等)
             return name[:2] + '投信'
             
         df['投信'] = df['基金名稱'].apply(extract_amc_name)
@@ -360,6 +358,7 @@ if st.session_state.raw_data is not None:
                     target_broker = st.selectbox("請選擇要觀察的券商：", available_brokers, index=default_index)
                 
                 amc_vol['名次'] = amc_vol.groupby('投信')['交易金額'].rank(ascending=False, method='min').astype(int)
+                # 上方表格：依交易金額降冪排列 (即名次 1, 2, 3...)
                 result = amc_vol[amc_vol['券商'] == target_broker].sort_values('交易金額', ascending=False)
                 result['交易金額'] = result['交易金額'].apply(lambda x: f"{x:,.0f}")
                 
@@ -373,6 +372,7 @@ if st.session_state.raw_data is not None:
                     available_amcs = sorted(sub_broker_df['投信'].dropna().astype(str).unique())
                     target_amc = st.selectbox("請選擇要觀察的投信：", available_amcs)
                 
+                # 上方表格：依交易金額降冪排列 (即名次 1, 2, 3...)
                 result = amc_vol[amc_vol['投信'] == target_amc].sort_values('交易金額', ascending=False).reset_index(drop=True)
                 result['名次'] = result['交易金額'].rank(ascending=False, method='min').astype(int)
                 result = result[['名次', '券商', '交易金額']]
@@ -385,7 +385,8 @@ if st.session_state.raw_data is not None:
 
             # --- 附加功能：基金明細與規模、經理人 ---
             with st.expander("🔍 點擊查看納入計算之基金明細 (自動載入快取資料)"):
-                funds_list = target_funds_raw[['投信', '主基金名稱']].drop_duplicates()
+                # 將各子基金的「交易金額」依照投信與主基金名稱進行加總
+                funds_list = target_funds_raw.groupby(['投信', '主基金名稱'], as_index=False)['交易金額'].sum()
                 
                 if st.session_state.fund_scale_data is not None:
                     funds_list = funds_list.merge(st.session_state.fund_scale_data, on='主基金名稱', how='left')
@@ -401,7 +402,12 @@ if st.session_state.raw_data is not None:
                 else:
                     funds_list['基金經理人'] = "未上傳經理人資料"
                 
-                funds_list = funds_list.sort_values(by=['投信', '主基金名稱'])
+                # 下方表格：依各基金貢獻的「交易金額」降冪排列
+                funds_list = funds_list.sort_values(by=['交易金額'], ascending=False)
+                
+                # 加上千分位逗號，方便閱讀
+                funds_list['交易金額'] = funds_list['交易金額'].apply(lambda x: f"{x:,.0f}")
+                
                 st.dataframe(funds_list, use_container_width=True, hide_index=True)
 
         else:
