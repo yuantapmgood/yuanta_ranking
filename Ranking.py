@@ -103,16 +103,18 @@ def process_raw_data(uploaded_file):
         df.columns = ["基金名稱", "名次", "券商", "總手續費", "總手續費占比", "交易金額", "股票手續費", "平均手續費率"]
         
         def clean_broker_name(name):
-            name = str(name)
-            clean_name = re.split(r'\(|（', name)[0].strip()
+            original_name = str(name).strip()
             
-            # 【新增】海外券商防誤殺機制：
-            # 如果名稱中包含這些海外地區關鍵字，就直接保留原名，不歸入台灣母公司
+            # 1. 【先檢查】用「包含括號的原始名稱」掃描海外關鍵字
+            # 這樣「元大證券(香港)」才能成功被攔截
             overseas_keywords = r'韓國|Korea|越南|Vietnam|香港|Hong Kong|HK|印尼|Indonesia|泰國|Thailand|新加坡|Singapore|亞洲|Asia'
-            if re.search(overseas_keywords, clean_name, re.IGNORECASE):
-                return clean_name
+            if re.search(overseas_keywords, original_name, re.IGNORECASE):
+                # 發現是海外公司，直接回傳原名，不進行歸戶
+                return original_name
             
-            # 國內券商歸戶邏輯
+            # 2. 【再切肉】確定不是海外公司後，再把括號切掉，準備進行台灣母公司的歸戶
+            clean_name = re.split(r'\(|（', original_name)[0].strip()
+            
             if re.search(r'元大|yuanta', clean_name, re.IGNORECASE):
                 return '元大證券'
             elif re.search(r'凱基|kgi', clean_name, re.IGNORECASE):
