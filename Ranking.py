@@ -106,6 +106,13 @@ def process_raw_data(uploaded_file):
             name = str(name)
             clean_name = re.split(r'\(|（', name)[0].strip()
             
+            # 【新增】海外券商防誤殺機制：
+            # 如果名稱中包含這些海外地區關鍵字，就直接保留原名，不歸入台灣母公司
+            overseas_keywords = r'韓國|Korea|越南|Vietnam|香港|Hong Kong|HK|印尼|Indonesia|泰國|Thailand|新加坡|Singapore|亞洲|Asia'
+            if re.search(overseas_keywords, clean_name, re.IGNORECASE):
+                return clean_name
+            
+            # 國內券商歸戶邏輯
             if re.search(r'元大|yuanta', clean_name, re.IGNORECASE):
                 return '元大證券'
             elif re.search(r'凱基|kgi', clean_name, re.IGNORECASE):
@@ -144,7 +151,7 @@ def process_raw_data(uploaded_file):
     except Exception as e:
         st.error(f"排名檔案解析失敗。錯誤訊息: {e}")
         return None
-
+        
 @st.cache_data
 def process_scale_data(uploaded_file):
     try:
