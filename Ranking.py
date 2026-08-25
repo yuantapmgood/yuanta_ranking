@@ -127,7 +127,7 @@ def process_raw_data(uploaded_file):
             
         df['券商'] = df['券商'].apply(clean_broker_name)
         df['交易金額'] = pd.to_numeric(df['交易金額'], errors='coerce').fillna(0)
-        df['投信'] = df['基金名稱'].str[:2]
+        df['投信'] = df['基金名稱'].str[:4]
         df['主基金名稱'] = df['基金名稱'].apply(get_main_fund_name)
         return df
     except Exception as e:
