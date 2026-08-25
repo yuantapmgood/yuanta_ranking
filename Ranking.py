@@ -71,7 +71,7 @@ def get_main_fund_name(name):
     return clean_name
 
 def get_base_id(fund_id):
-    """提取基金統編的數字主體 (如 00526748A -> 00526748)"""
+    """提取基金統編的數字主體"""
     if pd.isna(fund_id):
         return None
     match = re.search(r'^(\d+)', str(fund_id).strip())
@@ -358,7 +358,6 @@ if st.session_state.raw_data is not None:
                     target_broker = st.selectbox("請選擇要觀察的券商：", available_brokers, index=default_index)
                 
                 amc_vol['名次'] = amc_vol.groupby('投信')['交易金額'].rank(ascending=False, method='min').astype(int)
-                # 上方表格：依交易金額降冪排列 (即名次 1, 2, 3...)
                 result = amc_vol[amc_vol['券商'] == target_broker].sort_values('交易金額', ascending=False)
                 result['交易金額'] = result['交易金額'].apply(lambda x: f"{x:,.0f}")
                 
@@ -372,7 +371,6 @@ if st.session_state.raw_data is not None:
                     available_amcs = sorted(sub_broker_df['投信'].dropna().astype(str).unique())
                     target_amc = st.selectbox("請選擇要觀察的投信：", available_amcs)
                 
-                # 上方表格：依交易金額降冪排列 (即名次 1, 2, 3...)
                 result = amc_vol[amc_vol['投信'] == target_amc].sort_values('交易金額', ascending=False).reset_index(drop=True)
                 result['名次'] = result['交易金額'].rank(ascending=False, method='min').astype(int)
                 result = result[['名次', '券商', '交易金額']]
@@ -385,8 +383,27 @@ if st.session_state.raw_data is not None:
 
             # --- 附加功能：基金明細與規模、經理人 ---
             with st.expander("🔍 點擊查看納入計算之基金明細 (自動載入快取資料)"):
-                # 將各子基金的「交易金額」依照投信與主基金名稱進行加總
-                funds_list = target_funds_raw.groupby(['投信', '主基金名稱'], as_index=False)['交易金額'].sum()
+                
+                # --- 新增：明細表二次過濾器 ---
+                if "券商視角" in view_mode:
+                    amc_options = ["顯示全部投信"] + sorted(target_funds_raw['投信'].dropna().astype(str).unique())
+                    detail_filter = st.selectbox("🔍 選擇特定投信查看明細：", amc_options)
+                    if detail_filter != "顯示全部投信":
+                        filtered_raw = target_funds_raw[target_funds_raw['投信'] == detail_filter]
+                    else:
+                        filtered_raw = target_funds_raw
+                else:
+                    broker_options = ["顯示全部券商"] + sorted(target_funds_raw['券商'].dropna().astype(str).unique())
+                    # 在投信視角，預設幫國金部同仁選好「元大證券」以精準看自家單量
+                    default_idx = broker_options.index('元大證券') if '元大證券' in broker_options else 0
+                    detail_filter = st.selectbox("🔍 選擇特定券商查看明細 (預設為元大證券)：", broker_options, index=default_idx)
+                    if detail_filter != "顯示全部券商":
+                        filtered_raw = target_funds_raw[target_funds_raw['券商'] == detail_filter]
+                    else:
+                        filtered_raw = target_funds_raw
+
+                # 將過濾後的子基金「交易金額」依照投信與主基金名稱進行加總
+                funds_list = filtered_raw.groupby(['投信', '主基金名稱'], as_index=False)['交易金額'].sum()
                 
                 if st.session_state.fund_scale_data is not None:
                     funds_list = funds_list.merge(st.session_state.fund_scale_data, on='主基金名稱', how='left')
@@ -402,7 +419,7 @@ if st.session_state.raw_data is not None:
                 else:
                     funds_list['基金經理人'] = "未上傳經理人資料"
                 
-                # 下方表格：依各基金貢獻的「交易金額」降冪排列
+                # 下方表格：依各基金專屬貢獻的「交易金額」降冪排列
                 funds_list = funds_list.sort_values(by=['交易金額'], ascending=False)
                 
                 # 加上千分位逗號，方便閱讀
