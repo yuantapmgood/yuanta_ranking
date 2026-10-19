@@ -7,7 +7,7 @@ import io
 # --- 頁面與全域變數設定 ---
 st.set_page_config(page_title="投信公會券商排名分析系統", layout="wide")
 
-REPORT_PERIOD = "2026/1月-8月"
+REPORT_PERIOD = "2026/1月-9月"
 ADMIN_PASSWORD = "yuantadavid"
 
 # 抓取目前 Ranking.py 所在的資料夾路徑
